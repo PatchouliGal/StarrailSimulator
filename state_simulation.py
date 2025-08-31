@@ -106,16 +106,16 @@ class State:
     """状态"""
 
     def __init__(self,
-                 characters: list[CharacterState],
+                 sequence: list[CharacterState],
                  time: float = 0.0,
                  parent=None,
                  modify=None):
         self.parent: Action | None = parent  # 父动作
-        self.characters = characters
+        self.characters = sorted(sequence, key=lambda s: s.position)
         self.time = time
         if modify is not None:
             modify(self)
-        self.sequence = sorted(self.characters, key=CharacterState.left_time.fget)  # 行动序列
+        self.sequence = sorted(sequence, key=CharacterState.left_time.fget)  # 行动序列
         self._children = None
         self._optimal_child = None
 
@@ -166,8 +166,7 @@ class State:
 
     def copy(self, parent, modify):
         """基于当前状态，创建一个新的状态，并指定其父动作"""
-        new_characters = [copy.deepcopy(c) for c in self.characters]
-        return State(characters=new_characters,
+        return State(sequence=copy.deepcopy(self.sequence),
                      time=self.time,
                      modify=modify,
                      parent=parent)
@@ -244,6 +243,19 @@ class CharacterAction(Action):
         super().__init__(parent, reward, name)
 
 
+"""单点情况追踪"""
+c0 = Firefly(0, speed=250, energy=0.0)
+c1 = Bronya(1, speed=139, energy=120.0)
+init_state = State(sequence=[c0, c1])
+print(init_state.optimal_value)
+s = init_state
+while True:
+    a = s.optimal_child
+    if a is None:
+        break
+    print(a)
+    s = a.child
+
 """扫描参数空间"""
 # 流萤基础速度：104
 # 布洛妮娅基础速度：99
@@ -270,7 +282,7 @@ for s0 in range(min_speed[0], max_speed[0] + 1):
     for s1 in range(min_speed[1], max_speed[1] + 1):
         c0 = Firefly(0, speed=s0, energy=0.0)
         c1 = Bronya(1, speed=s1, energy=120.0)
-        init_state = State(characters=[c0, c1])
+        init_state = State(sequence=[c0, c1])
         t = init_state.optimal_value
         round_table[s0 - min_speed[0]][s1 - min_speed[1]] = t
 
