@@ -25,94 +25,246 @@ HIGH_SPEED_TIME = 142.857
 FULL_DISTANCE = 10000.0
 
 
-class CharacterState:
-    """角色状态"""
-    basic_speed = 100
-    max_energy = 100
+class Buff:
+    """Buff"""
+    name = 'unnamed'  # 名称
 
     def __init__(self,
-                 position: int,
-                 speed: float,
-                 energy: float = None,
-                 distance: float = FULL_DISTANCE, ):
-        if energy is None:
-            energy = self.max_energy / 2.0
-        self.position = position
-        self.speed = speed
-        self.energy = energy
-        self.distance = distance
+                 turn: int | None = None,  # 剩余回合数（None为永续）
+                 stack: int | None = None,  # 层数（None为不可叠层）
+                 ):
+        self.turn = turn  # 剩余回合数
+        self.stack = stack  # 层数
+
+    def enable(self, character):
+        """添加buff"""
+        pass
+
+    def disable(self, character):
+        """删除buff"""
+        pass
+
+
+class SomatotypicalHelix(Buff):
+    name = "分型的螺旋"
+
+    def enable(self, character):
+        character.speed += 0.098 * character.base_speed
+        character.buffs.append(self)
+
+
+class CompleteCombustion(Buff):
+    name = "完全燃烧"
+
+    def enable(self, character):
+        character.speed += 60
+        character.buffs.append(self)
+
+    def disable(self, character):
+        character.speed -= 60
+        character.buffs.remove(self)
+
+
+class CharacterState:
+    """角色状态"""
+    # 以下是战斗中不变的属性
+    name = 'unnamed'  # 名称
+    # combat_type = 1  # 战斗属性（1-7：物火冰雷风量虚）
+    # path = 1  # 命途（1-8：毁灭 巡猎 智识 同协 虚无 存护 丰饶 记忆）
+    # level = 80  # 等级
+    # base_max_hp = 2000  # 基础生命上限
+    # base_attack = 1000  # 基础攻击力
+    # base_defence = 1000  # 基础防御力
+    base_speed = 100  # 基础速度
+    max_energy = 100  # 能量上限
+
+    def __init__(self,
+                 position: int,  # 编队位置
+                 # max_hp: float,  # 生命上限
+                 # hp: float,  # 生命值
+                 # attack: float,  # 攻击力
+                 # defence: float,  # 防御力
+                 speed: float,  # 速度
+                 distance: float,  # 距离
+                 energy: float,  # 能量
+                 energy_regeneration_rate: float,  # 能量恢复效率
+                 # crit_rate: float,  # 暴击率
+                 # crit_damage: float,  # 暴击伤害
+                 # break_effect: float,  # 击破特攻
+                 # outgoing_healing_boost: float,  # 治疗量加成
+                 # effect_hit_rate: float,  # 效果命中
+                 # effect_resistance: float,  # 效果抵抗
+                 # damage_boost: list[float],  # 伤害提高
+                 # resistance_boost: list[float],  # 抗性提高
+                 buffs: list[Buff]  # 增益/减益效果
+                 ):
+        self.position = position  # 编队位置
+        # self.max_hp = max_hp  # 生命上限
+        # self.hp = hp  # 生命值
+        # self.attack = attack  # 攻击力
+        # self.defence = defence  # 防御力
+        self.speed = speed  # 速度
+        self.distance = distance  # 距离
+        self.energy = energy  # 能量
+        self.energy_regeneration_rate = energy_regeneration_rate  # 能量恢复效率
+        # self.crit_rate = crit_rate  # 暴击率
+        # self.crit_damage = crit_damage  # 暴击伤害
+        # self.break_effect = break_effect  # 击破特攻
+        # self.outgoing_healing_boost = outgoing_healing_boost  # 治疗量加成
+        # self.effect_hit_rate = effect_hit_rate  # 效果命中
+        # self.effect_resistance = effect_resistance  # 效果抵抗
+        # self.damage_boost = damage_boost  # 伤害提高
+        # self.resistance_boost = resistance_boost  # 抗性提高
+        self.buffs = buffs  # 增益/减益效果
 
     @property
-    def left_time(self):
+    def action_value(self):
         """计算剩余行动值"""
         return self.distance / self.speed
 
-    def all_attack_action(self, parent):
+    def regenerate_energy(self, energy: float, fixed: bool = False):
+        """恢复能量"""
+        if not fixed:
+            energy = energy * self.energy_regeneration_rate
+        self.energy = min(self.energy + energy, self.max_energy)
+
+    # def add_buff(self, buff: Buff):
+    #     """添加buff"""
+    #     buff.enable(self)
+
+    def turn_over(self):
+        """回合结束"""
+        for buff in self.buffs:
+            if buff.turn is not None:
+                buff.turn -= 1
+                if buff.turn <= 0:
+                    buff.disable(self)
+
+    def all_attack_action(self, state):
         """获取普攻动作（遍历所有目标配置）"""
         return []
 
-    def all_skill_action(self, parent):
+    def all_skill_action(self, state):
         """获取战技动作（遍历所有目标配置）"""
         return []
 
-    def all_ultimate_action(self, parent):
+    def all_ultimate_action(self, state):
         """获取终结技动作（遍历所有目标配置）"""
         return []
 
 
 class Firefly(CharacterState):
-    basic_speed = 104
+    base_speed = 104
     max_energy = 240
 
-    def all_attack_action(self, parent):
+    def all_attack_action(self, state):
         def modify(new):
             new.characters[self.position].distance = FULL_DISTANCE
 
-        a = CharacterAction(parent, position=self.position, target=[], reward=1, name=f'{self.position}',
+        a = CharacterAction(state, position=self.position, target=[], reward=1, name=f'{self.position}',
                             modify=modify)
         return [a]
 
 
 class Bronya(CharacterState):
-    basic_speed = 99
+    base_speed = 99
     max_energy = 120
 
-    def all_skill_action(self, parent):
+    def all_skill_action(self, state):
         actions = []
         for target in [0]:
             def modify(new):
                 new.characters[self.position].distance = FULL_DISTANCE
                 new.characters[target].distance = 0.0
 
-            a = CharacterAction(parent, position=self.position, target=[target], reward=0, name=f'{self.position}',
+            a = CharacterAction(state, position=self.position, target=[target], reward=0, name=f'{self.position}',
                                 modify=modify)
             actions.append(a)
         return actions
 
-    def all_ultimate_action(self, parent):
+    def all_ultimate_action(self, state):
         def modify(new):
             for c in new.characters:
                 c.distance = max(0.0, c.distance - 2500.0)
             new.characters[self.position].energy = 0.0
 
-        a = CharacterAction(parent, position=self.position, target=[], reward=0, name=f'U{self.position}',
+        a = CharacterAction(state, position=self.position, target=[], reward=0, name=f'U{self.position}',
                             modify=modify)
         return [a]
+
+
+class Timer:
+    """倒计时"""
+
+    def __init__(self,
+                 speed: float,  # 速度
+                 distance: float = FULL_DISTANCE,  # 距离
+                 ):
+        self.speed = speed  # 速度
+        self.distance = distance  # 距离
+
+    @property
+    def action_value(self):
+        """计算剩余行动值"""
+        return self.distance / self.speed
+
+    def actions(self, state):
+        """倒计时结束时的动作"""
+        return [Action(state)]
+
+
+class CompleteCombustionTimer(Timer):
+    """完全燃烧倒计时"""
+
+    def __init__(self,
+                 speed: float = 70,  # 速度
+                 distance: float = FULL_DISTANCE,  # 距离
+                 ):
+        super().__init__(speed, distance)
+
+    def actions(self, state):
+        def modify(new: State):
+            for c in new.characters:
+                if isinstance(c, Firefly):
+                    for b in c.buffs:
+                        if isinstance(b, CompleteCombustion):
+                            b.disable(c)
+                            break
+                    break
+            for t in new.timers:
+                if isinstance(t, CompleteCombustionTimer):
+                    new.timers.remove(t)
+                    break
+
+        return [Action(state, modify=modify)]
 
 
 class State:
     """状态"""
 
     def __init__(self,
-                 sequence: list[CharacterState],
-                 time: float = 0.0,
-                 parent=None, ):
+                 parent=None,  # 父动作
+                 sequence: list[CharacterState] = None,  # 角色序列
+                 timers: list[Timer] = None,  # 倒计时序列
+                 time: float = 0.0,  # 时间
+                 in_turn: int | None = None,  # 当前所在回合的角色的编队位置，None为不在回合内
+                 ):
         self.parent: Action | None = parent  # 父动作
-        self.characters = sorted(sequence, key=lambda s: s.position)
-        self.time = time
-        if parent is not None:
+        if parent is None:
+            self.sequence = sequence  # 角色行动序列
+            self.characters = sequence  # 角色编队
+            self.timers = timers  # 倒计时序列
+            self.time = time  # 时间
+            self.in_turn = in_turn  # 当前所在回合的角色的编队位置，None为不在回合内
+        else:
+            self.sequence = copy.deepcopy(self.parent.parent.sequence)
+            self.characters = sorted(self.sequence, key=lambda s: s.position)
+            self.timers = copy.deepcopy(self.parent.parent.timers)
+            self.time = self.parent.parent.time
+            self.in_turn = self.parent.parent.in_turn
             parent.modify(self)
-        self.sequence = sorted(sequence, key=CharacterState.left_time.fget)  # 行动序列
+        self.sequence.sort(key=CharacterState.action_value.fget)  # 重排行动序列
+        self.timers.sort(key=Timer.action_value.fget)  # 重排倒计时序列
         self._children = None  # 所有子动作
         self._optimal_child = None
 
@@ -120,7 +272,7 @@ class State:
     def children(self):
         """状态的所有可能动作"""
         if self._children is None:
-            self._children: list[Action] = self._policies()
+            self._children: list[Action] = self.policies()
         return self._children
 
     @property
@@ -137,7 +289,7 @@ class State:
             return 0
         return self.optimal_child.optimal_value
 
-    def _policies(self):
+    def policies(self):
         """策略集（获取状态的所有可能动作）"""
         actions: list[Action] = []
 
@@ -148,17 +300,17 @@ class State:
         for c in self.characters:
             if c.energy >= c.max_energy:
                 actions += c.all_ultimate_action(self)
-        # 遍历每个位置是否行动（按照行动序列）
-        for c in self.sequence:
+        # 若在某角色的回合中
+        if self.in_turn is not None:
+            c = self.characters[self.in_turn]
+            # 该角色尚未行动
             if c.distance < 0.01:
                 actions += c.all_attack_action(self)
                 actions += c.all_skill_action(self)
-                break
-        else:
-            # 无人行动时推进时间
-            a = TimePassAction(self, name='TP')
-            actions.append(a)
-
+                return actions
+        # 无人行动时推进时间
+        a = TimePassAction(self, name='TP')
+        actions.append(a)
         return actions
 
 
@@ -171,7 +323,7 @@ class Action:
                  reward: int = 0,
                  modify=None):
         if name is None:
-            name = self.__class__
+            name = str(self.__class__)
         self.parent: State = parent  # 父状态
         self.name = name
         self.reward = reward
@@ -199,11 +351,7 @@ class Action:
 
     def _transition(self) -> State:
         """状态转移（获取动作后的状态）"""
-        p = self.parent
-        new = State(sequence=copy.deepcopy(p.sequence),
-                    time=p.time,
-                    parent=self)
-        return new
+        return State(self)
 
     def modify(self, new: State):
         """动作对状态的修改"""
@@ -211,17 +359,30 @@ class Action:
 
 
 class TimePassAction(Action):
-    """时间推进至下一个状态"""
+    """结束当前回合，时间推进至下一个状态"""
 
     def modify(self, new: State):
-        p = self.parent
-        passed_time = p.sequence[0].left_time
-        if p.time < HIGH_SPEED_TIME <= p.time + passed_time:
-            passed_time = HIGH_SPEED_TIME - p.time
-            new.characters[0].speed -= 60
+        if new.in_turn is not None:
+            new.characters[new.in_turn].turn_over()
+            new.in_turn = None
+            new.sequence.sort(key=CharacterState.action_value.fget)  # 重排行动序列
+            new.timers.sort(key=Timer.action_value.fget)  # 重排倒计时序列
+
+        passed_time = new.sequence[0].action_value
+        if new.timers:
+            passed_time_t = new.timers[0].action_value
+            if passed_time > passed_time_t:
+                passed_time = passed_time_t
+                new.policies = lambda: new.timers[0].actions(new)
+            else:
+                new.in_turn = new.sequence[0].position
+        else:
+            new.in_turn = new.sequence[0].position
         new.time += passed_time
-        for c, new_c in zip(p.characters, new.characters):
-            new_c.distance -= passed_time * c.speed
+        for c in new.characters:
+            c.distance -= passed_time * c.speed
+        for t in new.timers:
+            t.distance -= passed_time * t.speed
 
 
 class CharacterAction(Action):
@@ -242,9 +403,13 @@ class CharacterAction(Action):
 
 
 """单点情况追踪"""
-c0 = Firefly(0, speed=250, energy=0.0)
-c1 = Bronya(1, speed=139, energy=120.0)
-init_state = State(sequence=[c0, c1])
+c0 = Firefly(0, speed=250, distance=FULL_DISTANCE,
+             energy=0.0, energy_regeneration_rate=1.0,
+             buffs=[CompleteCombustion()])
+c1 = Bronya(1, speed=139, distance=FULL_DISTANCE,
+            energy=120.0, energy_regeneration_rate=1.0,
+            buffs=[])
+init_state = State(sequence=[c0, c1], timers=[CompleteCombustionTimer()])
 print(init_state.optimal_value)
 
 
@@ -281,9 +446,13 @@ round_table = np.zeros([len(sr) for sr in speed_range])
 
 for s0 in range(min_speed[0], max_speed[0] + 1):
     for s1 in range(min_speed[1], max_speed[1] + 1):
-        c0 = Firefly(0, speed=s0, energy=0.0)
-        c1 = Bronya(1, speed=s1, energy=120.0)
-        init_state = State(sequence=[c0, c1])
+        c0 = Firefly(0, speed=s0, distance=FULL_DISTANCE,
+                     energy=0.0, energy_regeneration_rate=1.0,
+                     buffs=[CompleteCombustion()])
+        c1 = Bronya(1, speed=s1, distance=FULL_DISTANCE,
+                    energy=120.0, energy_regeneration_rate=1.0,
+                    buffs=[])
+        init_state = State(sequence=[c0, c1], timers=[CompleteCombustionTimer()])
         t = init_state.optimal_value
         round_table[s0 - min_speed[0]][s1 - min_speed[1]] = t
 
