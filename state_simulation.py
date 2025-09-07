@@ -1,6 +1,7 @@
 """"""
 import copy
 import math
+import time
 
 import numpy as np
 import pandas as pd
@@ -64,12 +65,11 @@ class Firefly(CharacterState):
     max_energy = 240
 
     def all_attack_action(self, parent):
-        a = CharacterAction(parent, position=self.position, target=[], reward=1, name=f'{self.position}')
-
         def modify(new):
             new.characters[self.position].distance = FULL_DISTANCE
 
-        a.modify = modify
+        a = CharacterAction(parent, position=self.position, target=[], reward=1, name=f'{self.position}',
+                            modify=modify)
         return [a]
 
 
@@ -80,25 +80,23 @@ class Bronya(CharacterState):
     def all_skill_action(self, parent):
         actions = []
         for target in [0]:
-            a = CharacterAction(parent, position=self.position, target=[target], reward=0, name=f'{self.position}')
-
             def modify(new):
                 new.characters[self.position].distance = FULL_DISTANCE
                 new.characters[target].distance = 0.0
 
-            a.modify = modify
+            a = CharacterAction(parent, position=self.position, target=[target], reward=0, name=f'{self.position}',
+                                modify=modify)
             actions.append(a)
         return actions
 
     def all_ultimate_action(self, parent):
-        a = CharacterAction(parent, position=self.position, target=[], reward=0, name=f'U{self.position}')
-
         def modify(new):
             for c in new.characters:
                 c.distance = max(0.0, c.distance - 2500.0)
             new.characters[self.position].energy = 0.0
 
-        a.modify = modify
+        a = CharacterAction(parent, position=self.position, target=[], reward=0, name=f'U{self.position}',
+                            modify=modify)
         return [a]
 
 
@@ -108,15 +106,14 @@ class State:
     def __init__(self,
                  sequence: list[CharacterState],
                  time: float = 0.0,
-                 parent=None,
-                 modify=None):
+                 parent=None, ):
         self.parent: Action | None = parent  # 父动作
         self.characters = sorted(sequence, key=lambda s: s.position)
         self.time = time
-        if modify is not None:
-            modify(self)
+        if parent is not None:
+            parent.modify(self)
         self.sequence = sorted(sequence, key=CharacterState.left_time.fget)  # 行动序列
-        self._children = None
+        self._children = None  # 所有子动作
         self._optimal_child = None
 
     @property
@@ -164,27 +161,23 @@ class State:
 
         return actions
 
-    def copy(self, parent, modify):
-        """基于当前状态，创建一个新的状态，并指定其父动作"""
-        return State(sequence=copy.deepcopy(self.sequence),
-                     time=self.time,
-                     modify=modify,
-                     parent=parent)
-
 
 class Action:
     """动作"""
 
     def __init__(self,
                  parent: State,
+                 name: str = None,
                  reward: int = 0,
-                 name: str = None):
+                 modify=None):
         if name is None:
             name = self.__class__
+        self.parent: State = parent  # 父状态
         self.name = name
         self.reward = reward
-        self.parent: State = parent  # 父状态
-        self._child = None
+        if modify is not None:
+            self.modify = modify
+        self._child = None  # 子状态
         self._optimal_value = None
 
     @property
@@ -206,7 +199,11 @@ class Action:
 
     def _transition(self) -> State:
         """状态转移（获取动作后的状态）"""
-        return self.parent.copy(parent=self, modify=self.modify)
+        p = self.parent
+        new = State(sequence=copy.deepcopy(p.sequence),
+                    time=p.time,
+                    parent=self)
+        return new
 
     def modify(self, new: State):
         """动作对状态的修改"""
@@ -234,13 +231,14 @@ class CharacterAction(Action):
                  parent: State,
                  position: int,
                  target: list[int] = None,
+                 name: str = None,
                  reward: int = 0,
-                 name: str = ''):
+                 modify=None):
         if target is None:
             target = []
         self.position = position
         self.target = target
-        super().__init__(parent, reward, name)
+        super().__init__(parent=parent, reward=reward, name=name, modify=modify)
 
 
 """单点情况追踪"""
@@ -248,13 +246,15 @@ c0 = Firefly(0, speed=250, energy=0.0)
 c1 = Bronya(1, speed=139, energy=120.0)
 init_state = State(sequence=[c0, c1])
 print(init_state.optimal_value)
-s = init_state
-while True:
-    a = s.optimal_child
-    if a is None:
-        break
-    print(a)
-    s = a.child
+
+
+def trace(s, n=0):
+    for a in s.children:
+        print(' ' * n, a)
+        trace(a.child, n + 1)
+
+
+trace(init_state)
 
 """扫描参数空间"""
 # 流萤基础速度：104
@@ -276,6 +276,7 @@ max_speed = [math.floor(bs * (1 + fsb + max_speed_boost) + fsa + max_speed_add)
 speed_range = [np.arange(a, b + 1) for a, b in zip(min_speed, max_speed)]
 
 # 遍历所有速度配置
+start_time = time.time()
 round_table = np.zeros([len(sr) for sr in speed_range])
 
 for s0 in range(min_speed[0], max_speed[0] + 1):
@@ -285,6 +286,9 @@ for s0 in range(min_speed[0], max_speed[0] + 1):
         init_state = State(sequence=[c0, c1])
         t = init_state.optimal_value
         round_table[s0 - min_speed[0]][s1 - min_speed[1]] = t
+
+stop_time = time.time()
+print('用时：', stop_time - start_time)
 
 # 保存数据
 df = pd.DataFrame(round_table.T, index=speed_range[1], columns=speed_range[0])
