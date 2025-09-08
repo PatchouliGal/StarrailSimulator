@@ -20,6 +20,15 @@ import pandas as pd
 
 # 从一个初始State开始，所有State和Action构成一棵树的节点和边，叶子节点为超时后的第一个状态
 
+# 系统结构
+# 状态 State
+# . 角色状态 CharacterState
+#   . Buff
+# . 倒计时 Timer
+# -> 动作 Action
+# 动作 Action
+# -> 状态 State
+
 MAX_TIME = 150.0
 HIGH_SPEED_TIME = 142.857
 FULL_DISTANCE = 10000.0
@@ -27,7 +36,7 @@ FULL_DISTANCE = 10000.0
 
 class Buff:
     """Buff"""
-    name = 'unnamed'  # 名称
+    name = '未命名buff'  # 名称
 
     def __init__(self,
                  turn: int | None = None,  # 剩余回合数（None为永续）
@@ -68,7 +77,7 @@ class CompleteCombustion(Buff):
 class CharacterState:
     """角色状态"""
     # 以下是战斗中不变的属性
-    name = 'unnamed'  # 名称
+    name = '未命名角色'  # 名称
     # combat_type = 1  # 战斗属性（1-7：物火冰雷风量虚）
     # path = 1  # 命途（1-8：毁灭 巡猎 智识 同协 虚无 存护 丰饶 记忆）
     # level = 80  # 等级
@@ -236,11 +245,12 @@ class CompleteCombustionTimer(Timer):
                     new.timers.remove(t)
                     break
 
-        return [Action(state, modify=modify)]
+        return [Action(state, name="CC", modify=modify)]
 
 
 class State:
     """状态"""
+    init_count = 0  # 记录生成的实例数
 
     def __init__(self,
                  parent=None,  # 父动作
@@ -249,6 +259,7 @@ class State:
                  time: float = 0.0,  # 时间
                  in_turn: int | None = None,  # 当前所在回合的角色的编队位置，None为不在回合内
                  ):
+        State.init_count += 1
         self.parent: Action | None = parent  # 父动作
         if parent is None:
             self.sequence = sequence  # 角色行动序列
@@ -272,7 +283,7 @@ class State:
     def children(self):
         """状态的所有可能动作"""
         if self._children is None:
-            self._children: list[Action] = self.policies()
+            self._children: list[Action] = self.get_children()
         return self._children
 
     @property
@@ -289,7 +300,7 @@ class State:
             return 0
         return self.optimal_child.optimal_value
 
-    def policies(self):
+    def get_children(self):
         """策略集（获取状态的所有可能动作）"""
         actions: list[Action] = []
 
@@ -316,14 +327,14 @@ class State:
 
 class Action:
     """动作"""
+    init_count = 0  # 记录生成的实例数
 
     def __init__(self,
                  parent: State,
-                 name: str = None,
+                 name: str = "Unnamed",
                  reward: int = 0,
                  modify=None):
-        if name is None:
-            name = str(self.__class__)
+        Action.init_count += 1
         self.parent: State = parent  # 父状态
         self.name = name
         self.reward = reward
@@ -336,7 +347,7 @@ class Action:
     def child(self):
         """动作后的状态"""
         if self._child is None:
-            self._child: State = self._transition()
+            self._child: State = self.get_child()
         return self._child
 
     @property
@@ -349,7 +360,7 @@ class Action:
     def __str__(self):
         return f"({self.name}, time: {self.parent.time:.2f})"
 
-    def _transition(self) -> State:
+    def get_child(self) -> State:
         """状态转移（获取动作后的状态）"""
         return State(self)
 
@@ -373,7 +384,7 @@ class TimePassAction(Action):
             passed_time_t = new.timers[0].action_value
             if passed_time > passed_time_t:
                 passed_time = passed_time_t
-                new.policies = lambda: new.timers[0].actions(new)
+                new.get_children = lambda: new.timers[0].actions(new)
             else:
                 new.in_turn = new.sequence[0].position
         else:
@@ -410,8 +421,11 @@ c1 = Bronya(1, speed=139, distance=FULL_DISTANCE,
             energy=120.0, energy_regeneration_rate=1.0,
             buffs=[])
 init_state = State(sequence=[c0, c1], timers=[CompleteCombustionTimer()])
+print("State: ", State.init_count)
+print("Action: ", Action.init_count)
 print(init_state.optimal_value)
-
+print("State: ", State.init_count)
+print("Action: ", Action.init_count)
 
 def trace(s, n=0):
     for a in s.children:
