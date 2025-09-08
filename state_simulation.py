@@ -6,28 +6,15 @@ import time
 import numpy as np
 import pandas as pd
 
-# 利用强化学习的一些概念，但是去除概率性的内容。
-# 参考：https://blog.csdn.net/CltCj/article/details/119445005
-# 状态 State
-# 动作 Action
-# 策略集（去概率） State.policies(self) -> list[Action]
-# 状态转移（去概率） Action.transition(self, State) -> State
-# 奖励 Action.reward : int
-# 回报（return）表示未来的累积奖励
-# 动作价值（action value）表示基于某策略pi在某状态s执行某动作a后，预期的回报
-# 最优动作价值 Action.optimal_value -> int
-# 最优状态价值 State.optimal_value -> int
+# 此版本不再定义Action类，将动作表示为State类中的方法。
+# 这使所有State对象构成的树形结构更加典型。
+# 在State对象的属性中，包含了Character、Timer两种子对象。
+# 在Character对象的属性中，包含了Buff子对象。
+# State对象的生成有两种形式：
+# 1. 直接生成初始对象。这种方式需要指定对象所有的属性。
+# 2. 基于已有对象生成。这种方式会深层复制已有对象（但不复制父子关系），然后再修改部分属性。
+# 规定：State对象生成之后（即__init__方法之外），不再修改任何属性。
 
-# 从一个初始State开始，所有State和Action构成一棵树的节点和边，叶子节点为超时后的第一个状态
-
-# 系统结构
-# 状态 State
-# . 角色状态 CharacterState
-#   . Buff
-# . 倒计时 Timer
-# -> 动作 Action
-# 动作 Action
-# -> 状态 State
 
 MAX_TIME = 150.0
 HIGH_SPEED_TIME = 142.857
@@ -35,8 +22,8 @@ FULL_DISTANCE = 10000.0
 
 
 class Buff:
-    """Buff"""
-    name = '未命名buff'  # 名称
+    """增益/减益"""
+    name = '未命名增益/减益'  # 名称
 
     def __init__(self,
                  turn: int | None = None,  # 剩余回合数（None为永续）
@@ -54,14 +41,6 @@ class Buff:
         pass
 
 
-class SomatotypicalHelix(Buff):
-    name = "分型的螺旋"
-
-    def enable(self, character):
-        character.speed += 0.098 * character.base_speed
-        character.buffs.append(self)
-
-
 class CompleteCombustion(Buff):
     name = "完全燃烧"
 
@@ -74,8 +53,8 @@ class CompleteCombustion(Buff):
         character.buffs.remove(self)
 
 
-class CharacterState:
-    """角色状态"""
+class Character:
+    """角色"""
     # 以下是战斗中不变的属性
     name = '未命名角色'  # 名称
     # combat_type = 1  # 战斗属性（1-7：物火冰雷风量虚）
@@ -126,84 +105,77 @@ class CharacterState:
         # self.resistance_boost = resistance_boost  # 抗性提高
         self.buffs = buffs  # 增益/减益效果
 
-    @property
-    def action_value(self):
-        """计算剩余行动值"""
-        return self.distance / self.speed
-
-    def regenerate_energy(self, energy: float, fixed: bool = False):
-        """恢复能量"""
-        if not fixed:
-            energy = energy * self.energy_regeneration_rate
-        self.energy = min(self.energy + energy, self.max_energy)
-
-    # def add_buff(self, buff: Buff):
-    #     """添加buff"""
-    #     buff.enable(self)
-
     def turn_over(self):
         """回合结束"""
+        # 所有buff持续回合数-1
         for buff in self.buffs:
             if buff.turn is not None:
                 buff.turn -= 1
                 if buff.turn <= 0:
                     buff.disable(self)
 
-    def all_attack_action(self, state):
+    def attack_actions(self, state):
         """获取普攻动作（遍历所有目标配置）"""
-        return []
+        children: list[State] = []
+        return children
 
-    def all_skill_action(self, state):
+    def skill_actions(self, state):
         """获取战技动作（遍历所有目标配置）"""
-        return []
+        children: list[State] = []
+        return children
 
-    def all_ultimate_action(self, state):
+    def ultimate_actions(self, state):
         """获取终结技动作（遍历所有目标配置）"""
-        return []
+        children: list[State] = []
+        return children
 
 
-class Firefly(CharacterState):
+class Firefly(Character):
+    name = '流萤'
     base_speed = 104
     max_energy = 240
 
-    def all_attack_action(self, state):
-        def modify(new):
+    def attack_actions(self, state):
+        def modify(new: State):
+            new.type = "角色行动后"
             new.characters[self.position].distance = FULL_DISTANCE
+            new.value += 1
 
-        a = CharacterAction(state, position=self.position, target=[], reward=1, name=f'{self.position}',
-                            modify=modify)
-        return [a]
+        return [State(name=f'A{self.position}', parent=state, modify=modify, )]
 
 
-class Bronya(CharacterState):
+class Bronya(Character):
+    name = '布洛妮娅'
     base_speed = 99
     max_energy = 120
 
-    def all_skill_action(self, state):
-        actions = []
+    def skill_actions(self, state):
+        children: list[State] = []
         for target in [0]:
-            def modify(new):
+            def modify(new: State):
+                new.type = "角色行动后"
                 new.characters[self.position].distance = FULL_DISTANCE
                 new.characters[target].distance = 0.0
 
-            a = CharacterAction(state, position=self.position, target=[target], reward=0, name=f'{self.position}',
-                                modify=modify)
-            actions.append(a)
-        return actions
+            children.append(State(name=f'S{self.position}', parent=state, modify=modify, ))
+        return children
 
-    def all_ultimate_action(self, state):
-        def modify(new):
-            for c in new.characters:
-                c.distance = max(0.0, c.distance - 2500.0)
-            new.characters[self.position].energy = 0.0
+    def ultimate_actions(self, state):
+        children: list[State] = []
+        if self.energy >= self.max_energy:
+            def modify(new: State):
+                for c in new.sequence:
+                    new.type = "角色行动后"
+                    c.distance = max(0.0, c.distance - 2500.0)
+                new.characters[self.position].energy = 0.0
 
-        a = CharacterAction(state, position=self.position, target=[], reward=0, name=f'U{self.position}',
-                            modify=modify)
-        return [a]
+            children.append(State(name=f'U{self.position}', parent=state, modify=modify, ))
+        return children
 
 
 class Timer:
     """倒计时"""
+    name = '未命名倒计时'  # 名称
 
     def __init__(self,
                  speed: float,  # 速度
@@ -212,14 +184,10 @@ class Timer:
         self.speed = speed  # 速度
         self.distance = distance  # 距离
 
-    @property
-    def action_value(self):
-        """计算剩余行动值"""
-        return self.distance / self.speed
-
     def actions(self, state):
         """倒计时结束时的动作"""
-        return [Action(state)]
+        children: list[State] = []
+        return children
 
 
 class CompleteCombustionTimer(Timer):
@@ -233,7 +201,8 @@ class CompleteCombustionTimer(Timer):
 
     def actions(self, state):
         def modify(new: State):
-            for c in new.characters:
+            new.type = "倒计时后"
+            for c in new.sequence:
                 if isinstance(c, Firefly):
                     for b in c.buffs:
                         if isinstance(b, CompleteCombustion):
@@ -245,7 +214,12 @@ class CompleteCombustionTimer(Timer):
                     new.timers.remove(t)
                     break
 
-        return [Action(state, name="CC", modify=modify)]
+        return [State(name=f'CC', parent=state, modify=modify, )]
+
+
+def action_value(self: Character | Timer) -> float:
+    """计算剩余行动值"""
+    return self.distance / self.speed
 
 
 class State:
@@ -253,164 +227,119 @@ class State:
     init_count = 0  # 记录生成的实例数
 
     def __init__(self,
-                 parent=None,  # 父动作
-                 sequence: list[CharacterState] = None,  # 角色序列
+                 name: str,  # 产生此状态的动作名称
+                 sequence: list[Character] = None,  # 角色行动序列
                  timers: list[Timer] = None,  # 倒计时序列
                  time: float = 0.0,  # 时间
                  in_turn: int | None = None,  # 当前所在回合的角色的编队位置，None为不在回合内
+                 parent=None,  # 父状态
+                 modify=None,  # 复制父状态的属性后需要进行的修改（需要修改状态类型、价值）
                  ):
-        State.init_count += 1
-        self.parent: Action | None = parent  # 父动作
+        State.init_count += 1  # 记录生成的实例数
+        self.parent: State | None = parent  # 父状态
+        self.name: str = name  # 产生此状态的动作名称
+        self.type: str = "起点"  # 状态类型（该属性直接由动作决定，不复制父状态，在modify中修改）
+        # 所有状态类型：
+        # 起点 角色行动前 角色行动后 倒计时前 倒计时后 终结技后
         if parent is None:
-            self.sequence = sequence  # 角色行动序列
-            self.characters = sequence  # 角色编队
-            self.timers = timers  # 倒计时序列
-            self.time = time  # 时间
-            self.in_turn = in_turn  # 当前所在回合的角色的编队位置，None为不在回合内
+            # 指定所有属性
+            self.sequence: list[Character] = sorted(sequence, key=action_value)  # 角色行动序列（自动重排）
+            self.characters: dict[int, Character] = {c.position: c for c in self.sequence}  # 角色编队 
+            self.timers: list[Timer] = sorted(timers, key=action_value)  # 角色行动序列（自动重排）
+            self.time: float = time  # 时间
+            self.in_turn: int = in_turn  # 当前所在回合的角色的编队位置，None为不在回合内
+            self.value = 0  # 价值
         else:
-            self.sequence = copy.deepcopy(self.parent.parent.sequence)
-            self.characters = sorted(self.sequence, key=lambda s: s.position)
-            self.timers = copy.deepcopy(self.parent.parent.timers)
-            self.time = self.parent.parent.time
-            self.in_turn = self.parent.parent.in_turn
-            parent.modify(self)
-        self.sequence.sort(key=CharacterState.action_value.fget)  # 重排行动序列
-        self.timers.sort(key=Timer.action_value.fget)  # 重排倒计时序列
-        self._children = None  # 所有子动作
-        self._optimal_child = None
+            # 复制父状态的属性
+            self.sequence: list[Character] = copy.deepcopy(self.parent.sequence)  # 角色行动序列
+            self.characters: dict[int, Character] = {c.position: c for c in self.sequence}  # 角色编队 
+            self.timers: list[Timer] = copy.deepcopy(self.parent.timers)  # 倒计时序列
+            self.time: float = self.parent.time  # 时间
+            self.in_turn: int = self.parent.in_turn  # 当前所在回合的角色的编队位置，None为不在回合内
+            self.value = self.parent.value  # 价值（在modify中修改）
+            modify(self)
+            self.sequence.sort(key=action_value)  # 重排角色行动序列
+            self.timers.sort(key=action_value)  # 重排倒计时序列
+        self.children = self.get_children()  # 所有子状态
 
-    @property
-    def children(self):
-        """状态的所有可能动作"""
-        if self._children is None:
-            self._children: list[Action] = self.get_children()
-        return self._children
-
-    @property
-    def optimal_child(self):
-        """状态的最优动作"""
-        if self._optimal_child is None:
-            self._optimal_child: Action | None = max(self.children, key=Action.optimal_value.fget, default=None)
-        return self._optimal_child
+    # @property
+    # def children(self):
+    #     """所有子状态"""
+    #     if self._children is None:
+    #         self._children: list[State] = self.get_children()
+    #     return self._children
 
     @property
     def optimal_value(self):
-        """状态的最优价值"""
-        if self.optimal_child is None:
-            return 0
-        return self.optimal_child.optimal_value
+        """子树中的最优价值"""
+        if not self.children:
+            return self.value
+        return max([s.optimal_value for s in self.children])
 
     def get_children(self):
-        """策略集（获取状态的所有可能动作）"""
-        actions: list[Action] = []
+        """获取所有子状态"""
+        children: list[State] = []
 
         # 若此状态已超时，作为叶子节点返回空列表
+        # 由于超时只会发生在时间推进之后，只要时间推进不产生奖励，就可以将叶子节点的价值作为不超时能获得的价值
         if self.time > MAX_TIME:
             return []
-        # 遍历每个位置是否有终结技
-        for c in self.characters:
-            if c.energy >= c.max_energy:
-                actions += c.all_ultimate_action(self)
-        # 若在某角色的回合中
-        if self.in_turn is not None:
-            c = self.characters[self.in_turn]
-            # 该角色尚未行动
-            if c.distance < 0.01:
-                actions += c.all_attack_action(self)
-                actions += c.all_skill_action(self)
-                return actions
-        # 无人行动时推进时间
-        a = TimePassAction(self, name='TP')
-        actions.append(a)
-        return actions
 
+        # 若此状态在某倒计时前，则其当前必然在倒计时序列最前
+        if self.type == "倒计时前":
+            t = self.timers[0]
+            # 必须执行倒计时动作（不可插入终结技），返回动作后的状态
+            return t.actions(self)
 
-class Action:
-    """动作"""
-    init_count = 0  # 记录生成的实例数
+        # 获取每个位置释放（可用的）终结技后的状态
+        for c in self.sequence:
+            children += c.ultimate_actions(self)
 
-    def __init__(self,
-                 parent: State,
-                 name: str = "Unnamed",
-                 reward: int = 0,
-                 modify=None):
-        Action.init_count += 1
-        self.parent: State = parent  # 父状态
-        self.name = name
-        self.reward = reward
-        if modify is not None:
-            self.modify = modify
-        self._child = None  # 子状态
-        self._optimal_value = None
+        # 若此状态在某角色行动前，则其当前必然在角色行动序列最前
+        if self.type == "角色行动前":
+            c = self.sequence[0]
+            # 必须选择释放普攻/战技
+            children += c.attack_actions(self)
+            children += c.skill_actions(self)
+            return children
 
-    @property
-    def child(self):
-        """动作后的状态"""
-        if self._child is None:
-            self._child: State = self.get_child()
-        return self._child
+        # 推进时间
+        new = self.time_pass_action()
+        children.append(new)
+        return children
 
-    @property
-    def optimal_value(self):
-        """动作的最优价值"""
-        if self._optimal_value is None:
-            self._optimal_value: int = self.reward + self.child.optimal_value
-        return self._optimal_value
+    def time_pass_action(self):
+        """退出当前所在回合，时间推进至下一个状态"""
 
-    def __str__(self):
-        return f"({self.name}, time: {self.parent.time:.2f})"
+        def modify(new: State):
+            # 退出当前所在回合
+            if new.in_turn is not None:
+                new.characters[new.in_turn].turn_over()
+                new.in_turn = None
+                new.sequence.sort(key=action_value)  # 重排角色行动序列
+                new.timers.sort(key=action_value)  # 重排倒计时序列
 
-    def get_child(self) -> State:
-        """状态转移（获取动作后的状态）"""
-        return State(self)
+            # 比较最靠前的角色和最靠前的倒计时，决定推进的时间和下一个状态的类型
+            passed_time = action_value(new.sequence[0])
+            new.type = "角色行动前"
+            if new.timers:
+                passed_time_t = action_value(new.timers[0])
+                if passed_time > passed_time_t:
+                    passed_time = passed_time_t
+                    new.type = "倒计时前"
 
-    def modify(self, new: State):
-        """动作对状态的修改"""
-        pass
-
-
-class TimePassAction(Action):
-    """结束当前回合，时间推进至下一个状态"""
-
-    def modify(self, new: State):
-        if new.in_turn is not None:
-            new.characters[new.in_turn].turn_over()
-            new.in_turn = None
-            new.sequence.sort(key=CharacterState.action_value.fget)  # 重排行动序列
-            new.timers.sort(key=Timer.action_value.fget)  # 重排倒计时序列
-
-        passed_time = new.sequence[0].action_value
-        if new.timers:
-            passed_time_t = new.timers[0].action_value
-            if passed_time > passed_time_t:
-                passed_time = passed_time_t
-                new.get_children = lambda: new.timers[0].actions(new)
-            else:
+            # 若为角色行动，则进入该角色的回合
+            if new.type == "角色行动前":
                 new.in_turn = new.sequence[0].position
-        else:
-            new.in_turn = new.sequence[0].position
-        new.time += passed_time
-        for c in new.characters:
-            c.distance -= passed_time * c.speed
-        for t in new.timers:
-            t.distance -= passed_time * t.speed
 
+            # 推进时间
+            new.time += passed_time
+            for c in new.sequence:
+                c.distance -= passed_time * c.speed
+            for t in new.timers:
+                t.distance -= passed_time * t.speed
 
-class CharacterAction(Action):
-    """角色常规动作（普攻/战技）"""
-
-    def __init__(self,
-                 parent: State,
-                 position: int,
-                 target: list[int] = None,
-                 name: str = None,
-                 reward: int = 0,
-                 modify=None):
-        if target is None:
-            target = []
-        self.position = position
-        self.target = target
-        super().__init__(parent=parent, reward=reward, name=name, modify=modify)
+        return State(name="TP", parent=self, modify=modify, )
 
 
 """单点情况追踪"""
@@ -420,17 +349,16 @@ c0 = Firefly(0, speed=250, distance=FULL_DISTANCE,
 c1 = Bronya(1, speed=139, distance=FULL_DISTANCE,
             energy=120.0, energy_regeneration_rate=1.0,
             buffs=[])
-init_state = State(sequence=[c0, c1], timers=[CompleteCombustionTimer()])
+init_state = State("初始状态", sequence=[c0, c1], timers=[CompleteCombustionTimer()])
 print("State: ", State.init_count)
-print("Action: ", Action.init_count)
 print(init_state.optimal_value)
 print("State: ", State.init_count)
-print("Action: ", Action.init_count)
+
 
 def trace(s, n=0):
-    for a in s.children:
-        print(' ' * n, a)
-        trace(a.child, n + 1)
+    for s in s.children:
+        print(' ' * n, s.name, f'{s.time:.2f}')
+        trace(s, n + 1)
 
 
 trace(init_state)
@@ -466,7 +394,7 @@ for s0 in range(min_speed[0], max_speed[0] + 1):
         c1 = Bronya(1, speed=s1, distance=FULL_DISTANCE,
                     energy=120.0, energy_regeneration_rate=1.0,
                     buffs=[])
-        init_state = State(sequence=[c0, c1], timers=[CompleteCombustionTimer()])
+        init_state = State("初始状态", sequence=[c0, c1], timers=[CompleteCombustionTimer()])
         t = init_state.optimal_value
         round_table[s0 - min_speed[0]][s1 - min_speed[1]] = t
 
