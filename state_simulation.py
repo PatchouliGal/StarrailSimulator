@@ -7,18 +7,64 @@ import numpy as np
 import pandas as pd
 from typing_extensions import Callable
 
-# 此版本不再定义Action类，将动作表示为State类中的方法。
-# 这使所有State对象构成的树形结构更加典型。
-# 在State对象的属性中，包含了Character、Timer两种子对象。
-# 在Character对象的属性中，包含了Buff子对象。
-# State对象的生成有两种形式：
-# 1. 直接生成初始对象。这种方式需要指定对象所有的属性。
-# 2. 基于已有对象生成。这种方式会深层复制已有对象（但不复制父子关系），然后再修改部分属性。
-# 规定：State对象生成之后（即__init__方法之外），不再修改任何属性。
+"""
+每个状态State包含以下属性：
+（战斗相关）
+角色编队 characters : dict[int, Character]
+倒计时表 timers : dict[int, Timer]
+当前回合 in_turn : int
+行动序列 sequence : list[int]
+战技点 skill_point : int
+时间（行动值） time : float
+类型 type : str
+（搜索相关）
+父节点 parent : State
+子节点 children : list[State]
+名称 name : str
+累积价值 value : float
+最优价值 optimal_value : float
+注：行动序列不含当前回合的角色/倒计时。
+注：名称记录具体节点信息。
+注：最优价值为子树中最大的累积价值。
 
+状态转移的过程称为行动Action，根据状态前的行动，状态分类为以下几种：
+起点
+角色行动后（普攻/战技）
+倒计时后
+敌人行动后（TODO）
+终结技后
+追加行动后（TODO）
+时间推进后（回合切换）
+注：每个状态一定处于某一角色/倒计时/敌人的回合中，故回合结束与回合开始可以合并为一种行动。
+注：终结技可以插入在起点/角色回合开始/角色行动/倒计时/敌人行动/终结技之后，但需要等待这些行动触发的追加行动结束。
+
+每个角色Character包含以下属性：
+（基础属性）
+名称 name : str
+基础速度 base_speed : int
+能量上限 max_energy : int
+能量消耗 energy_cost : int
+位置 position : int
+...
+（可变属性）
+速度 speed : float
+距离 distance : float
+能量 energy: float
+能量恢复效率 energy_regeneration_rate: float
+...
+buff表 buffs : list[Buff]
+
+每个Buff包含以下属性：
+剩余回合数 turn : int
+层数 stack : int
+
+每个倒计时Timer包含以下属性：
+位置 position : int
+速度 speed : float
+距离 distance : float
+"""
 
 MAX_TIME = 150.0
-HIGH_SPEED_TIME = 142.857
 FULL_DISTANCE = 10000.0
 
 
@@ -69,16 +115,16 @@ class SomatotypicalHelixBuff(Buff):
         character.speed -= 0.098 * character.base_speed
 
 
-class TorridScorch(Buff):
-    name = ""
+class TorridScorchBuff(Buff):
+    name = "炽灼"
     decrease_at_start = True
 
     def __init__(self):
         super().__init__(3, None)
 
 
-class Overtone(Buff):
-    name = ""
+class OvertoneBuff(Buff):
+    name = "弦外音"
     decrease_at_start = True
 
     def __init__(self):
@@ -185,7 +231,6 @@ class Character:
 
     def attack_modify(self, new: 'State'):
         """普攻动作对状态的修改"""
-        new.type = "角色行动后"
         new.skill_point = min(new.skill_point + 1, new.max_skill_point)
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE
@@ -195,13 +240,13 @@ class Character:
     def attack_actions(self, state: 'State') -> list['State']:
         """获取普攻动作（遍历所有目标配置）"""
         children: list[State] = []
-        children.append(State(name=f'{self.position}A', parent=state, modify=self.attack_modify, ))
+        children.append(State(name=f'{self.position}A', type="角色行动后",
+                              parent=state, modify=self.attack_modify, ))
         return children
         # 标准模板
 
     def skill_modify(self, new: 'State'):
         """战技动作对状态的修改"""
-        new.type = "角色行动后"
         new.skill_point -= 1
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE
@@ -212,13 +257,13 @@ class Character:
         """获取战技动作（遍历所有目标配置）"""
         children: list[State] = []
         if state.skill_point >= 1:
-            children.append(State(name=f'{self.position}S', parent=state, modify=self.skill_modify, ))
+            children.append(State(name=f'{self.position}S', type="角色行动后",
+                                  parent=state, modify=self.skill_modify, ))
         return children
         # 标准模板
 
     def ultimate_modify(self, new: 'State'):
         """终结技动作对状态的修改"""
-        new.type = "终结技后"
         new_self = new.characters[self.position]
         new_self.energy = 0.0
         new_self.regenerate_energy(5.0)
@@ -228,7 +273,8 @@ class Character:
         """获取终结技动作（遍历所有目标配置）"""
         children: list[State] = []
         if self.energy >= self.max_energy:
-            children.append(State(name=f'{self.position}U', parent=state, modify=self.ultimate_modify, ))
+            children.append(State(name=f'{self.position}U', type="终结技后",
+                                  parent=state, modify=self.ultimate_modify, ))
         return children
         # 标准模板
 
@@ -239,7 +285,6 @@ class Firefly(Character):
     max_energy = 240
 
     def enhanced_attack_modify(self, new: 'State'):
-        new.type = "角色行动后"
         new.skill_point = min(new.skill_point + 1, new.max_skill_point)
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE
@@ -247,22 +292,21 @@ class Firefly(Character):
     def attack_actions(self, state: 'State') -> list['State']:
         children: list[State] = []
         if self.get_buff(CompleteCombustionBuff) is None:
-            children.append(State(name=f'{self.position}A', parent=state, modify=self.attack_modify, ))
+            children.append(State(name=f'{self.position}A', type="角色行动后",
+                                  parent=state, modify=self.attack_modify, ))
         else:
-            children.append(State(name=f'{self.position}A+', parent=state, modify=self.enhanced_attack_modify, ))
+            children.append(State(name=f'{self.position}A+', type="角色行动后",
+                                  parent=state, modify=self.enhanced_attack_modify, ))
         return children
 
     def skill_modify(self, new: 'State'):
-        new.type = "角色行动后"
         new.skill_point -= 1
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE * (1.0 - 0.25)
-        new_self.regenerate_energy(30.0)
         new_self.regenerate_energy(0.6 * self.max_energy, fixed=True)
 
     def enhanced_skill_modify(self, new: 'State'):
         """强化战技动作对状态的修改"""
-        new.type = "角色行动后"
         new.skill_point -= 1
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE
@@ -272,24 +316,27 @@ class Firefly(Character):
         children: list[State] = []
         if state.skill_point >= 1:
             if self.get_buff(CompleteCombustionBuff) is None:
-                children.append(State(name=f'{self.position}S', parent=state, modify=self.skill_modify, ))
+                children.append(State(name=f'{self.position}S', type="角色行动后",
+                                      parent=state, modify=self.skill_modify, ))
             else:
-                children.append(State(name=f'{self.position}S+', parent=state, modify=self.enhanced_skill_modify, ))
+                children.append(State(name=f'{self.position}S+', type="角色行动后",
+                                      parent=state, modify=self.enhanced_skill_modify, ))
         return children
 
     def ultimate_modify(self, new: 'State'):
-        new.type = "终结技后"
         new_self = new.characters[self.position]
         new_self.energy = 0.0
         new_self.regenerate_energy(5.0)
         new_self.append_buff(CompleteCombustionBuff)
         new_self.distance = max(0.0, new_self.distance - FULL_DISTANCE)
-        new.timers.append(CompleteCombustionTimer())
+        i = max(10, max(new.characters_and_timers.keys()))
+        new.timers[i + 1] = CompleteCombustionTimer(i + 1)
 
     def ultimate_actions(self, state: 'State') -> list['State']:
         children: list[State] = []
-        if self.get_buff(CompleteCombustionBuff) is None:
-            children.append(State(name=f'{self.position}U', parent=state, modify=self.ultimate_modify, ))
+        if self.get_buff(CompleteCombustionBuff) is None and self.energy >= self.max_energy:
+            children.append(State(name=f'{self.position}U', type="终结技后",
+                                  parent=state, modify=self.ultimate_modify, ))
         return children
 
 
@@ -299,7 +346,6 @@ class Bronya(Character):
     max_energy = 120
 
     def attack_modify(self, new: 'State'):
-        new.type = "角色行动后"
         new.skill_point = min(new.skill_point + 1, new.max_skill_point)
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE * (1.0 - 0.28)
@@ -309,12 +355,11 @@ class Bronya(Character):
         children: list[State] = []
         if state.skill_point >= 1:
             # for target_position in state.characters:
-            for target_position in [0]:  # 剪枝：只拉0号位
+            for target_position in [1]:  # 剪枝：只拉1号位
                 if state.characters[target_position].distance < 100.0:  # 剪枝：拒绝短距离拉条
                     continue
 
                 def modify(new: State):
-                    new.type = "角色行动后"
                     new.skill_point -= 1
                     new_self = new.characters[self.position]
                     new_self.distance = FULL_DISTANCE
@@ -322,19 +367,19 @@ class Bronya(Character):
                     if target_position != self.position:
                         new_target = new.characters[target_position]
                         new_target.distance = 0.0  # 立即行动
-                        # 将目标角色提前到角色行动序列最前方
-                        new.sequence.remove(new_target)
-                        new.sequence.insert(0, new_target)
+                        # 将目标角色提前到行动序列最前方
+                        new.sequence.remove(target_position)
+                        new.sequence.insert(0, target_position)
 
-                children.append(State(name=f'{self.position}S{target_position}', parent=state, modify=modify, ))
+                children.append(State(name=f'{self.position}S{target_position}', type="角色行动后",
+                                      parent=state, modify=modify, ))
         return children
 
     def ultimate_modify(self, new: 'State'):
-        new.type = "终结技后"
         new_self = new.characters[self.position]
         new_self.energy = 0.0
         new_self.regenerate_energy(5.0)
-        for c in new.sequence:
+        for c in new.characters.values():
             c.distance = max(0.0, c.distance - 0.22 * FULL_DISTANCE)
 
 
@@ -343,9 +388,14 @@ class Fugue(Character):
     base_speed = 102
     max_energy = 130
 
+    def attack_actions(self, state: 'State') -> list['State']:
+        children: list[State] = []
+        if self.get_buff(TorridScorchBuff) is not None:  # 剪枝：只在有战技buff时使用普攻（不允许断buff）
+            children.append(State(name=f'{self.position}A', type="角色行动后",
+                                  parent=state, modify=self.attack_modify, ))
+        return children
+
     def skill_modify(self, new: 'State'):
-        new: State = new
-        new.type = "角色行动后"
         new.skill_point -= 1
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE
@@ -354,14 +404,15 @@ class Fugue(Character):
         if b is not None:
             new.skill_point += 1
             b.disable(new_self)
-        new_self.remove_buff(TorridScorch)
-        new_self.append_buff(TorridScorch)
+        new_self.remove_buff(TorridScorchBuff)
+        new_self.append_buff(TorridScorchBuff)
 
     def skill_actions(self, state: 'State') -> list['State']:
         children: list[State] = []
-        if self.get_buff(TorridScorch) is None:  # 剪枝：只在战技buff结束后使用战技
+        if self.get_buff(TorridScorchBuff) is None:  # 剪枝：只在战技buff结束后使用战技
             if state.skill_point >= 1:
-                children.append(State(name=f'{self.position}S', parent=state, modify=self.skill_modify, ))
+                children.append(State(name=f'{self.position}S', type="角色行动后",
+                                      parent=state, modify=self.skill_modify, ))
         return children
 
     def ultimate_actions(self, state: 'State') -> list['State']:
@@ -373,20 +424,27 @@ class RuanMei(Character):
     base_speed = 104
     max_energy = 130
 
+    def attack_actions(self, state: 'State') -> list['State']:
+        children: list[State] = []
+        if self.get_buff(OvertoneBuff) is not None:  # 剪枝：只在有战技buff时使用普攻（不允许断buff）
+            children.append(State(name=f'{self.position}A', type="角色行动后",
+                                  parent=state, modify=self.attack_modify, ))
+        return children
+
     def skill_modify(self, new: 'State'):
-        new.type = "角色行动后"
         new.skill_point -= 1
         new_self = new.characters[self.position]
         new_self.distance = FULL_DISTANCE
         new_self.regenerate_energy(30.0)
-        new_self.remove_buff(Overtone)
-        new_self.append_buff(Overtone)
+        new_self.remove_buff(OvertoneBuff)
+        new_self.append_buff(OvertoneBuff)
 
     def skill_actions(self, state: 'State') -> list['State']:
         children: list[State] = []
-        if self.get_buff(Overtone) is None:  # 剪枝：只在战技buff结束后使用战技
+        if self.get_buff(OvertoneBuff) is None:  # 剪枝：只在战技buff结束后使用战技
             if state.skill_point >= 1:
-                children.append(State(name=f'{self.position}S', parent=state, modify=self.skill_modify, ))
+                children.append(State(name=f'{self.position}S', type="角色行动后",
+                                      parent=state, modify=self.skill_modify, ))
         return children
 
     def ultimate_actions(self, state: 'State') -> list['State']:
@@ -398,47 +456,50 @@ class Timer:
     name: str = '未命名倒计时'  # 名称
 
     def __init__(self,
+                 position: int,  # 位置
                  speed: float,  # 速度
                  distance: float = FULL_DISTANCE,  # 距离
                  ):
+        self.position: int = position  # 位置
         self.speed: float = speed  # 速度
         self.distance: float = distance  # 距离
 
     def modify(self, new: 'State'):
         """倒计时结束时对状态的修改"""
-        new.type = "倒计时后"
+        pass
         # 标准模板
 
     def actions(self, state: 'State') -> list['State']:
         """倒计时结束时的动作"""
         children: list[State] = []
-        children.append(State(name=f'Timer', parent=state, modify=self.modify, ))
+        children.append(State(name=f'Timer', type="倒计时后", parent=state, modify=self.modify, ))
         return children
         # 标准模板
+
+    def turn_over(self, state: 'State'):
+        """在序列中删除倒计时（倒计时回合结束后执行）"""
+        state.timers.pop(self.position)
+        state.sequence.remove(self.position)
 
 
 class CompleteCombustionTimer(Timer):
     """完全燃烧倒计时"""
 
     def __init__(self,
+                 position: int,  # 位置
                  speed: float = 70,  # 速度
                  distance: float = FULL_DISTANCE,  # 距离
                  ):
-        super().__init__(speed, distance)
+        super().__init__(position, speed, distance)
 
     def modify(self, new: 'State'):
-        new.type = "倒计时后"
-        for c in new.sequence:
+        for c in new.characters.values():
             if isinstance(c, Firefly):
                 c.remove_buff(CompleteCombustionBuff)
                 break
-        for t in new.timers:
-            if isinstance(t, CompleteCombustionTimer):
-                new.timers.remove(t)
-                break
 
     def actions(self, state: 'State') -> list['State']:
-        return [State(name=f'CC', parent=state, modify=self.modify, )]
+        return [State(name=f'CC', type="倒计时后", parent=state, modify=self.modify, )]
 
 
 def action_value(self: Character | Timer) -> float:
@@ -449,31 +510,27 @@ def action_value(self: Character | Timer) -> float:
 def time_pass_modify(new: 'State'):
     # 退出当前所在回合
     if new.in_turn is not None:
-        new.characters[new.in_turn].turn_over()
+        i = new.in_turn
+        new.sequence.append(i)
         new.in_turn = None
-        new.sequence.sort(key=action_value)  # 重排角色行动序列
-        new.timers.sort(key=action_value)  # 重排倒计时序列
-
-    # 比较最靠前的角色和最靠前的倒计时，决定推进的时间和下一个状态的类型
-    passed_time = action_value(new.sequence[0])
-    new.type = "角色行动前"
-    if new.timers:
-        passed_time_t = action_value(new.timers[0])
-        if passed_time > passed_time_t:
-            passed_time = passed_time_t
-            new.type = "倒计时前"
+        if i in new.characters.keys():
+            new.characters[i].turn_over()
+        if i in new.timers.keys():
+            new.timers[i].turn_over(new)
+        new.sort_sequence()  # 重排行动序列
 
     # 推进时间
+    passed_time = action_value(new.characters_and_timers[new.sequence[0]])
     new.time += passed_time
-    for c in new.sequence:
+    for c in new.characters.values():
         c.distance -= passed_time * c.speed
-    for t in new.timers:
+    for t in new.timers.values():
         t.distance -= passed_time * t.speed
 
-    # 若为角色行动，则进入该角色的回合
-    if new.type == "角色行动前":
-        new.sequence[0].turn_start()
-        new.in_turn = new.sequence[0].position
+    # 进入新回合
+    new.in_turn = new.sequence.pop(0)
+    if new.in_turn in new.characters.keys():
+        new.characters[new.in_turn].turn_start()
 
 
 class State:
@@ -483,42 +540,46 @@ class State:
 
     def __init__(self,
                  name: str,  # 产生此状态的动作名称
-                 sequence: list[Character] = None,  # 角色行动序列
-                 timers: list[Timer] = None,  # 倒计时序列
+                 type: str,  # 状态类型
+                 characters: dict[int, Character] = None,  # 角色编队
+                 timers: dict[int, Timer] = None,  # 倒计时表
+                 in_turn: int | None = None,  # 当前回合的角色/倒计时的编号，None为不在回合内（仅允许起点不在回合内）
                  time: float = 0.0,  # 时间
                  skill_point: int = 3,  # 战技点
-                 in_turn: int | None = None,  # 当前所在回合的角色的编队位置，None为不在回合内
-                 parent: 'State | None' = None,  # 父状态
-                 modify: Callable[['State'], None] = None,  # 复制父状态的属性后需要进行的修改（需要修改状态类型、价值）
+                 parent: 'State | None' = None,  # 父节点
+                 modify: Callable[['State'], None] = None,  # 复制父节点的属性后需要进行的修改（需要修改状态类型、价值）
                  ):
         self.__class__.init_count += 1  # 记录生成的实例数
-        self.parent: State | None = parent  # 父状态
+        self.parent: State | None = parent  # 父节点
         self.name: str = name  # 产生此状态的动作名称
-        self.type: str = "起点"  # 状态类型（该属性直接由动作决定，不复制父状态，在modify中修改）
+        self.type: str = type  # 状态类型（该属性直接由动作决定）
         # 所有状态类型：
-        # 起点 角色行动前 角色行动后 倒计时前 倒计时后 终结技后
+        # 起点 角色行动后 倒计时后 终结技后 时间推进后
         if parent is None:
             # 指定所有属性
-            self.sequence: list[Character] = sorted(sequence, key=action_value)  # 角色行动序列（自动重排）
-            self.characters: dict[int, Character] = {c.position: c for c in self.sequence}  # 角色编队
-            self.timers: list[Timer] = sorted(timers, key=action_value)  # 倒计时序列（自动重排）
+            self.characters: dict[int, Character] = characters  # 角色编队
+            self.timers: dict[int, Timer] = timers  # 倒计时表
+            self.characters_and_timers = self.characters | self.timers
+            self.in_turn: int = in_turn  # 当前所在回合的角色的编队位置，None为不在回合内（仅允许起点不在回合内）
+            self.sequence: list[int] = list(characters.keys() | timers.keys())  # 行动序列
+            self.sort_sequence()  # 重排行动序列
             self.time: float = time  # 时间
             self.skill_point: int = skill_point  # 战技点
-            self.in_turn: int = in_turn  # 当前所在回合的角色的编队位置，None为不在回合内
             self.value = 0  # 价值
         else:
-            # 复制父状态的属性
-            self.sequence: list[Character] = copy.deepcopy(self.parent.sequence)  # 角色行动序列
-            self.characters: dict[int, Character] = {c.position: c for c in self.sequence}  # 角色编队
-            self.timers: list[Timer] = copy.deepcopy(self.parent.timers)  # 倒计时序列
+            # 复制父节点的属性
+            self.characters: dict[int, Character] = copy.deepcopy(self.parent.characters)  # 角色编队
+            self.timers: dict[int, Timer] = copy.deepcopy(self.parent.timers)  # 倒计时表
+            self.characters_and_timers = self.characters | self.timers
+            self.in_turn: int = self.parent.in_turn  # 当前所在回合的角色的编队位置，None为不在回合内（仅允许起点不在回合内）
+            self.sequence: list[int] = copy.deepcopy(self.parent.sequence)  # 行动序列
             self.time: float = self.parent.time  # 时间
             self.skill_point: int = self.parent.skill_point  # 战技点
-            self.in_turn: int = self.parent.in_turn  # 当前所在回合的角色的编队位置，None为不在回合内
             self.value = self.parent.value  # 价值（在modify中修改）
             modify(self)
-            self.sequence.sort(key=action_value)  # 重排角色行动序列
-            self.timers.sort(key=action_value)  # 重排倒计时序列
-        self.children: list[State] = self.get_children()  # 所有子状态
+            self.sort_sequence()  # 重排行动序列
+        print(self.value, end='')
+        self.children: list[State] = self.get_children()  # 所有子节点
 
     @property
     def optimal_value(self):
@@ -527,28 +588,32 @@ class State:
             return self.value
         return max([s.optimal_value for s in self.children])
 
+    def sort_sequence(self):
+        """重排行动序列"""
+        self.sequence.sort(key=lambda x: action_value(self.characters_and_timers[x]))
+
     def get_children(self) -> list['State']:
-        """获取所有子状态"""
+        """获取所有子节点"""
         children: list[State] = []
 
         # 若此状态已超时，则返回空列表
         if self.time > MAX_TIME:
             return []
 
-        # 若此状态在某倒计时前，则其当前必然在倒计时序列最前
-        if self.type == "倒计时前":
-            t = self.timers[0]
-            # 必须执行倒计时动作（不可插入终结技），返回动作后的状态
+        # 若此状态在时间推进后（回合开始），且处于倒计时的回合
+        if self.type == "时间推进后" and self.in_turn in self.timers.keys():
+            # 必须执行倒计时动作（不可插入终结技）
+            t = self.timers[self.in_turn]
             return t.actions(self)
 
         # 获取每个位置释放（可用的）终结技后的状态
-        for c in self.sequence:
+        for c in self.characters.values():
             children += c.ultimate_actions(self)
 
-        # 若此状态在某角色行动前，则其当前必然在角色行动序列最前
-        if self.type == "角色行动前":
-            c = self.sequence[0]
+        # 若此状态在时间推进后（回合开始），且处于角色的回合
+        if self.type == "时间推进后" and self.in_turn in self.characters.keys():
             # 必须选择释放普攻/战技
+            c = self.characters[self.in_turn]
             children += c.attack_actions(self)
             children += c.skill_actions(self)
             return children
@@ -559,7 +624,7 @@ class State:
 
     def time_pass_actions(self) -> list['State']:
         """退出当前所在回合，时间推进至下一个状态"""
-        new = State(name="TP", parent=self, modify=time_pass_modify, )
+        new = State(name="TP", type="时间推进后", parent=self, modify=time_pass_modify, )
 
         # 若此状态已超时，则返回空列表
         if new.time > MAX_TIME:
@@ -571,32 +636,38 @@ class State:
 """单点情况追踪"""
 
 start_time = time.time()
-c0 = Firefly(0, speed=250, distance=FULL_DISTANCE,
+c1 = Firefly(1, speed=250, distance=FULL_DISTANCE,
              energy=0.0, energy_regeneration_rate=1.0,
              buffs=[CompleteCombustionBuff()])
-c1 = Bronya(1, speed=139, distance=FULL_DISTANCE,
+c2 = Bronya(2, speed=139, distance=FULL_DISTANCE,
             energy=120.0, energy_regeneration_rate=1.244,
             buffs=[])
-c2 = Fugue(2, speed=194.0, distance=FULL_DISTANCE,
+c3 = Fugue(3, speed=194.0, distance=FULL_DISTANCE,
            energy=65.0, energy_regeneration_rate=1.0,
            buffs=[SylvanEnigma2Buff()])
-c3 = RuanMei(3, speed=140.0, distance=FULL_DISTANCE,
+c4 = RuanMei(4, speed=140.0, distance=FULL_DISTANCE,
              energy=65.0, energy_regeneration_rate=1.244,
              buffs=[])
-characters = [c0, c1, c2, c3]
-for c in characters:
+characters = {c.position: c for c in [c1, c2, c3, c4]}
+for c in characters.values():
     c.append_buff(SomatotypicalHelixBuff)
-c3.append_buff(Overtone)
-init_state = State("初始状态", sequence=characters, timers=[CompleteCombustionTimer()], skill_point=5)
+c4.append_buff(OvertoneBuff)
+init_state = State("初始状态", type="起点",
+                   characters=characters, timers={11: CompleteCombustionTimer(11)})
 print(init_state.optimal_value)
 print("State: ", State.init_count)
 
 
-def trace(s, n=0):
+def trace(s, n=0, log=''):
+    if not s.children:
+        print(log)
     for ss in reversed(s.children):
         if ss.optimal_value == s.optimal_value:
-            print('-' * n, ss.name, f'{s.time:.2f}')
-            trace(ss, n + 1)
+            # print(log, ss.name, ' ', f'{s.time:.2f}', f'{s.skill_point}', f'{s.value}')
+            if ss.name == "TP":
+                trace(ss, n + 1, log)
+            else:
+                trace(ss, n + 1, log + ' ' + ss.name)
 
 
 trace(init_state)
